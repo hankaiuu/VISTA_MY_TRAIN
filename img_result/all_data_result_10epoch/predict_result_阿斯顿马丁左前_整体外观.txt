@@ -1,0 +1,12 @@
+Image: 阿斯顿马丁左前.png
+Top 10 predicted emotions:
+1. 大气 (score: 5.3946)
+2. 时尚 (score: 4.9425)
+3. 好看 (score: 4.4764)
+4. 漂亮 (score: 4.2209)
+5. 霸气 (score: 3.9257)
+6. 年轻 (score: 3.7967)
+7. 满意 (score: 3.6572)
+8. 耐看 (score: 3.5331)
+9. 帅气 (score: 3.3276)
+10. 运动 (score: 3.2187)

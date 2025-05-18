@@ -14,6 +14,7 @@ import math
 import random
 import distutils
 import logging
+from torch.utils.tensorboard import SummaryWriter
 
 OMP_NUM_THREADS=8
 torch.backends.cudnn.benchmark = True
@@ -35,10 +36,10 @@ logger.addHandler(stream_handler)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', default = "VTKG-C", type = str)
-parser.add_argument('--lr', default=1e-4, type=float)
+parser.add_argument('--lr', default=1e-6, type=float)
 parser.add_argument('--dim', default=256, type=int)
-parser.add_argument('--num_epoch', default=150, type=int)
-parser.add_argument('--valid_epoch', default=50, type=int)
+parser.add_argument('--num_epoch', default=80, type=int)
+parser.add_argument('--valid_epoch', default=10, type=int)
 parser.add_argument('--exp', default='vista')
 parser.add_argument('--no_write', action='store_true')
 parser.add_argument('--num_layer_enc_ent', default=2, type=int)
@@ -64,7 +65,12 @@ for arg_name in vars(args).keys():
     if arg_name not in ["data", "exp", "no_write", "num_epoch", "cont", "early_stop"]:
         file_format+=f"_{vars(args)[arg_name]}"
 
+# 创建一个 TensorBoard 日志目录
+log_dir = f"./logs/{args.exp}/{args.data}/tensorboard"
+os.makedirs(log_dir, exist_ok=True)
 
+# 初始化 SummaryWriter
+writer = SummaryWriter(log_dir=log_dir)
 
 if not args.no_write:
     os.makedirs(f"./result/{args.exp}/{args.data}", exist_ok = True)
@@ -87,12 +93,30 @@ logger.info(f"{os.getpid()}")
 KG = VTKG(args.data, logger, max_vis_len = args.max_img_num)
 
 KG_Loader = torch.utils.data.DataLoader(KG, batch_size = args.batch_size, shuffle=True)
-model = VISTA(num_ent = KG.num_ent, num_rel = KG.num_rel, ent_vis = KG.ent_vis_matrix, rel_vis = KG.rel_vis_matrix, \
-              dim_vis = KG.vis_feat_size, ent_txt = KG.ent_txt_matrix, rel_txt = KG.rel_txt_matrix, dim_txt = KG.txt_feat_size, \
-              ent_vis_mask = KG.ent_vis_mask, rel_vis_mask = KG.rel_vis_mask, dim_str = args.dim, num_head = args.num_head, \
-              dim_hid = args.hidden_dim, num_layer_enc_ent = args.num_layer_enc_ent, num_layer_enc_rel = args.num_layer_enc_rel, \
-              num_layer_dec = args.num_layer_dec, dropout = args.dropout, \
-              emb_dropout = args.emb_dropout, vis_dropout = args.vis_dropout, txt_dropout = args.txt_dropout).cuda()
+# Initialize model
+model = VISTA(
+    num_ent=KG.num_ent,
+    num_rel=KG.num_rel,
+    ent_vis=KG.ent_vis_matrix if hasattr(KG, 'ent_vis_matrix') else None,
+    rel_vis=KG.rel_vis_matrix,
+    dim_vis=KG.vis_feat_size,
+    ent_txt=KG.ent_txt_matrix,
+    rel_txt=KG.rel_txt_matrix if hasattr(KG, 'rel_txt_matrix') else None,
+    dim_txt=KG.txt_feat_size,
+    ent_vis_mask=KG.ent_vis_mask if hasattr(KG, 'ent_vis_mask') else None,
+    rel_vis_mask=KG.rel_vis_mask,
+    dim_str=args.dim,
+    num_head=args.num_head,
+    dim_hid=args.hidden_dim,
+    num_layer_enc_ent=args.num_layer_enc_ent,
+    num_layer_enc_rel=args.num_layer_enc_rel,
+    num_layer_dec=args.num_layer_dec,
+    dropout=args.dropout,
+    emb_dropout=args.emb_dropout,
+    vis_dropout=args.vis_dropout,
+    txt_dropout=args.txt_dropout
+).cuda()
+
 
 loss_fn = nn.CrossEntropyLoss(label_smoothing = args.smoothing)
 optimizer = torch.optim.Adam(model.parameters(), lr = args.lr, weight_decay = args.decay)
@@ -108,7 +132,7 @@ if args.cont:
             loaded_ckpt = torch.load(f"./ckpt/{args.exp}/{args.data}/{file_format}_{ckpt_epoch}.ckpt")
             model.load_state_dict(loaded_ckpt['model_state_dict'])
             optimizer.load_state_dict(loaded_ckpt['optimizer_state_dict'])
-            scheduler.load_state_dict(load_ckpt['scheduler_state_dict'])
+            scheduler.load_state_dict(loaded_ckpt['scheduler_state_dict'])
             last_epoch = ckpt_epoch
 
 start = time.time()
@@ -120,29 +144,40 @@ best_mrr = 0.0
 
 for epoch in range(last_epoch + 1, args.num_epoch + 1):
     total_loss = 0.0
+    num_batches = 0  # 用于记录当前 epoch 中的 batch 数量
+
     for batch, label in KG_Loader:
-
-
         ent_embs, rel_embs = model()
-
+        
         scores = model.score(ent_embs, rel_embs, batch.cuda())
         loss = loss_fn(scores, label.cuda())
         total_loss += loss.item()
+        num_batches += 1  # 每处理一个 batch，计数器加 1
+        
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
         optimizer.step()
+
     scheduler.step()
+
+    # 计算平均损失
+    mean_loss = total_loss / num_batches if num_batches > 0 else 0.0
+
+    # 将平均损失写入 writer
+    writer.add_scalar("Loss/train", mean_loss, epoch)
+
     logger.info(f"{epoch} \t {total_loss:.6f} \t {time.time() - start:.6f} s")
-    if (epoch) % args.valid_epoch == 0:
+
+    # 每隔一定 epoch 进行验证并记录验证指标
+    if epoch % args.valid_epoch == 0:
         model.eval()
         with torch.no_grad():
-            
             ent_embs, rel_embs = model()
 
             lp_list_rank = []
             for triplet in tqdm(KG.valid):
-                h,r,t = triplet
+                h, r, t = triplet
 
                 head_score = model.score(ent_embs, rel_embs, torch.tensor([[KG.num_ent + KG.num_rel, r + KG.num_ent, t + KG.num_rel]]).cuda())[0].detach().cpu().numpy()
                 head_rank = calculate_rank(head_score, h, KG.filter_dict[(-1, r, t)])
@@ -154,6 +189,13 @@ for epoch in range(last_epoch + 1, args.num_epoch + 1):
 
             lp_list_rank = np.array(lp_list_rank)
             mr, mrr, hit10, hit3, hit1 = metrics(lp_list_rank)
+            
+            # 记录验证指标
+            writer.add_scalar("Metrics/MRR", mrr, epoch)
+            writer.add_scalar("Metrics/Hit@10", hit10, epoch)
+            writer.add_scalar("Metrics/Hit@3", hit3, epoch)
+            writer.add_scalar("Metrics/Hit@1", hit1, epoch)
+
             logger.info("Link Prediction on Validation Set")
             logger.info(f"MR: {mr}")
             logger.info(f"MRR: {mrr}")
@@ -167,10 +209,15 @@ for epoch in range(last_epoch + 1, args.num_epoch + 1):
 
         model.train()
 
-        torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), \
-                    'scheduler_state_dict': scheduler.state_dict()},
-                   f"./ckpt/{args.exp}/{args.data}/{file_format}_{epoch}.ckpt")
+        # 保存模型检查点
+        torch.save(
+            {
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict()
+            },
+            f"./ckpt/{args.exp}/{args.data}/{file_format}_{epoch}.ckpt"
+        )
 
-        model.train()
-
-logger.info("Done!")
+# 关闭 SummaryWriter
+writer.close()

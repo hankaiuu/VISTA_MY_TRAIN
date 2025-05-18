@@ -1,0 +1,12 @@
+Image: 罗密欧正脸.jpeg
+Top 10 predicted emotions:
+1. 大气 (score: 58.7476)
+2. 时尚 (score: 58.3616)
+3. 好看 (score: 57.7561)
+4. 漂亮 (score: 57.6949)
+5. 年轻 (score: 57.3568)
+6. 霸气 (score: 57.3445)
+7. 运动 (score: 57.0926)
+8. 满意 (score: 57.0900)
+9. 颜值高 (score: 57.0691)
+10. 耐看 (score: 56.8917)

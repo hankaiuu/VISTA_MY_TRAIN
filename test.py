@@ -74,16 +74,33 @@ logger.info(f"{os.getpid()}")
 KG = VTKG(args.data, logger, max_vis_len = args.max_img_num)
 
 KG_Loader = torch.utils.data.DataLoader(KG, batch_size = args.batch_size, shuffle=True)
-model = VISTA(num_ent = KG.num_ent, num_rel = KG.num_rel, ent_vis = KG.ent_vis_matrix, rel_vis = KG.rel_vis_matrix, \
-              dim_vis = KG.vis_feat_size, ent_txt = KG.ent_txt_matrix, rel_txt = KG.rel_txt_matrix, dim_txt = KG.txt_feat_size, \
-              ent_vis_mask = KG.ent_vis_mask, rel_vis_mask = KG.rel_vis_mask, dim_str = args.dim, num_head = args.num_head, \
-              dim_hid = args.hidden_dim, num_layer_enc_ent = args.num_layer_enc_ent, num_layer_enc_rel = args.num_layer_enc_rel, \
-              num_layer_dec = args.num_layer_dec, dropout = args.dropout, \
-              emb_dropout = args.emb_dropout, vis_dropout = args.vis_dropout, txt_dropout = args.txt_dropout).cuda()
 
+# Initialize model
+model = VISTA(
+    num_ent=KG.num_ent,
+    num_rel=KG.num_rel,
+    ent_vis=KG.ent_vis_matrix if hasattr(KG, 'ent_vis_matrix') else None,
+    rel_vis=KG.rel_vis_matrix,
+    dim_vis=KG.vis_feat_size,
+    ent_txt=KG.ent_txt_matrix,
+    rel_txt=KG.rel_txt_matrix if hasattr(KG, 'rel_txt_matrix') else None,
+    dim_txt=KG.txt_feat_size,
+    ent_vis_mask=KG.ent_vis_mask if hasattr(KG, 'ent_vis_mask') else None,
+    rel_vis_mask=KG.rel_vis_mask,
+    dim_str=args.dim,
+    num_head=args.num_head,
+    dim_hid=args.hidden_dim,
+    num_layer_enc_ent=args.num_layer_enc_ent,
+    num_layer_enc_rel=args.num_layer_enc_rel,
+    num_layer_dec=args.num_layer_dec,
+    dropout=args.dropout,
+    emb_dropout=args.emb_dropout,
+    vis_dropout=args.vis_dropout,
+    txt_dropout=args.txt_dropout
+).cuda()
 
-
-loaded_ckpt = torch.load(f"./ckpt/{args.exp}/{args.data}/{file_format}_{args.test_epoch}.ckpt")
+# loaded_ckpt = torch.load(f"./ckpt/{args.exp}/{args.data}/{file_format}_{args.test_epoch}.ckpt")
+loaded_ckpt = torch.load(f"/media/sda3/jqz-workspace/Car_design_srtp/VISTA/VISTA_only_text_modified/ckpt/vista/vista_data_only_text/_0.0001_256_50_2_1_2_4_2048_0.01_0.9_0.4_0.1_0.0_512_0.0_3_50_50.ckpt", weights_only = True)
 model.load_state_dict(loaded_ckpt['model_state_dict'])
 
 
@@ -92,29 +109,57 @@ all_rels = torch.arange(KG.num_rel).cuda()
 
 
 model.eval()
-with torch.no_grad():
-    test_lp_list_rank = []    
-    ent_embs, rel_embs = model()
 
-    for triplet in tqdm(KG.test):
-        h,r,t = triplet
+# 打开输出文件以写入预测结果
+output_file_path = "/media/sda3/jqz-workspace/Car_design_srtp/VISTA/VISTA_only_text_modified/score_emo.txt"  # 输出文件路径
+with open(output_file_path, "w", encoding="utf-8") as output_file:
+    with torch.no_grad():
+        test_lp_list_rank = []    
+        ent_embs, rel_embs = model()
 
-        head_score = model.score(ent_embs, rel_embs, torch.tensor([[KG.num_ent + KG.num_rel, r + KG.num_ent, t + KG.num_rel]]).cuda())[0].detach().cpu().numpy()
-        head_rank = calculate_rank(head_score, h, KG.filter_dict[(-1, r, t)])
-        tail_score = model.score(ent_embs, rel_embs, torch.tensor([[h + KG.num_rel, r + KG.num_ent, KG.num_ent + KG.num_rel]]).cuda())[0].detach().cpu().numpy()
-        tail_rank = calculate_rank(tail_score, t, KG.filter_dict[(h, r, -1)])
+        for triplet in tqdm(KG.test):
+            h, r, t = triplet
+            # print(h, r, t)
 
-        test_lp_list_rank.append(head_rank)
-        test_lp_list_rank.append(tail_rank)
-
-    test_lp_list_rank = np.array(test_lp_list_rank)
-    tmr, tmrr, thit10, thit3, thit1 = metrics(test_lp_list_rank)
-    logger.info("Link Prediction on Test Set")
-    logger.info(f"MR: {tmr}")
-    logger.info(f"MRR: {tmrr}")
-    logger.info(f"Hit10: {thit10}")
-    logger.info(f"Hit3: {thit3}")
-    logger.info(f"Hit1: {thit1}")
-
+            # 预测头实体得分
+            head_score = model.score(ent_embs, rel_embs, torch.tensor([[KG.num_ent + KG.num_rel, r + KG.num_ent, t + KG.num_rel]]).cuda())[0].detach().cpu().numpy()
+            print(head_score)
+            # print(torch.tensor([[KG.num_ent + KG.num_rel, r + KG.num_ent, t + KG.num_rel]]))
+            # 输出每个头实体的得分
+            for idx, score in enumerate(head_score):
+                # 获取实体名称
+                head_entity = KG.id2ent[idx]
+                
+                # 将得分输出到文件
+                output_file.write(f"{head_entity}: {score}\n")
 
 
+            # 计算头实体排名
+            # print(KG.id2rel[r])
+            # print(KG.id2ent[t])
+
+            head_rank = calculate_rank(head_score, h, KG.filter_dict[(-1, r, t)])
+            output_file.write("\n")
+            
+            # 找到 head_score 中的最大得分及其索引
+            max_score = np.max(head_score)  # 最大得分
+            max_idx = np.argmax(head_score)  # 最大得分对应的索引
+
+            # 获取得分最高的实体名称
+            top_entity = KG.id2ent[max_idx]
+
+
+            # print(head_rank)
+            test_lp_list_rank.append(head_rank)
+
+        # 计算评估指标
+        test_lp_list_rank = np.array(test_lp_list_rank)
+        tmr, tmrr, thit10, thit3, thit1 = metrics(test_lp_list_rank)
+        logger.info("Link Prediction on Test Set")
+        logger.info(f"MR: {tmr}")
+        logger.info(f"MRR: {tmrr}")
+        logger.info(f"Hit10: {thit10}")
+        logger.info(f"Hit3: {thit3}")
+        logger.info(f"Hit1: {thit1}")
+
+print(f"Predictions have been written to {output_file_path}")

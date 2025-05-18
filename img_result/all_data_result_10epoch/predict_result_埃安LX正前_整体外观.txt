@@ -1,0 +1,12 @@
+Image: 埃安LX正前.png
+Top 10 predicted emotions:
+1. 大气 (score: 5.3051)
+2. 时尚 (score: 4.8565)
+3. 好看 (score: 4.3769)
+4. 漂亮 (score: 4.1263)
+5. 霸气 (score: 3.8411)
+6. 年轻 (score: 3.7050)
+7. 满意 (score: 3.5376)
+8. 耐看 (score: 3.4373)
+9. 帅气 (score: 3.2295)
+10. 运动 (score: 3.1585)
